@@ -1,13 +1,19 @@
 services:
   - type: web
-    name: elite-whatsapp-bot
+    name: elite-class-v4
     runtime: docker
     plan: starter
     healthCheckPath: /health
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
     disk:
-      name: whatsapp-data
+      name: elite-class-data
       mountPath: /app/storage
       sizeGB: 1
