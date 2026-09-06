@@ -23,7 +23,7 @@ def setd(**kw):
 def options():
     o=webdriver.ChromeOptions()
     o.binary_location=os.getenv("CHROME_BIN","/usr/bin/chromium")
-    for a in ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
+    for a in ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu","--disable-software-rasterizer",
               "--window-size=1440,1000","--disable-extensions","--disable-notifications",
               "--no-first-run","--no-default-browser-check","--disable-popup-blocking"]:
         o.add_argument(a)
