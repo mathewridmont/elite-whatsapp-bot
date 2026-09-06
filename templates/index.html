@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ELITE CLASS</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#090909;color:#fff;font-family:Arial,sans-serif}.card{width:min(500px,90%);padding:32px;text-align:center;border-radius:24px;background:#171717;box-shadow:0 20px 80px rgba(0,0,0,.6)}h1{letter-spacing:4px}#status{margin:20px 0;font-size:19px}.online{color:#00e676}.waiting{color:#ffb300}.error{color:#ff5252}#qr{width:320px;max-width:90%;background:#fff;padding:10px;border-radius:12px;display:none;margin:25px auto}#instructions{line-height:2;color:#ccc}.small{color:#777;font-size:12px;margin-top:24px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>🎓 ELITE CLASS</h1>
+<h2 id="status">⏳ تشغيل البوت...</h2>
+<img id="qr" alt="WhatsApp QR">
+<p id="instructions">انتظر...</p>
+<div class="small">WhatsApp Web • Selenium</div>
+</div>
+<script>
+async function update(){try{const r=await fetch('/api/status',{cache:'no-store'});const d=await r.json();const s=document.getElementById('status'),q=document.getElementById('qr'),i=document.getElementById('instructions');if(d.connected){s.textContent='🟢 WhatsApp متصل';s.className='online';q.style.display='none';i.textContent='البوت يعمل الآن.'}else{s.textContent='🟡 '+d.message;s.className='waiting';if(d.qr){q.src='data:image/png;base64,'+d.qr;q.style.display='block';i.innerHTML='افتح WhatsApp في هاتفك<br>الإعدادات → الأجهزة المرتبطة<br>→ ربط جهاز<br>ثم امسح QR'}else{q.style.display='none';i.textContent='انتظر إنشاء QR...'}}}catch(e){console.log(e)}}setInterval(update,2000);update();
+</script>
+</body>
+</html>
