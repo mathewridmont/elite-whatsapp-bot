@@ -1,16 +1,9 @@
 services:
   - type: web
-    name: elite-class-v9
+    name: elite-class-v10
     runtime: docker
     plan: starter
     healthCheckPath: /health
-    envVars:
-      - key: ADMIN_USER
-        value: admin
-      - key: ADMIN_PASSWORD
-        sync: false
-      - key: FLASK_SECRET_KEY
-        generateValue: true
     disk:
       name: elite-class-data
       mountPath: /app/storage
