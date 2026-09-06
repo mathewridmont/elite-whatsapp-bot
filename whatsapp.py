@@ -1,162 +1,172 @@
-import os,time,re,threading,traceback
+import os,re,time,threading,subprocess,traceback
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from config import SESSION,DEBUG
 
 LOCK=threading.RLock()
-D={"connected":False,"ready":False,"message":"لم يبدأ Selenium بعد","error":None,
-   "url":"","title":"","phone":"","pairing_code":"","pairing_requested":False,
-   "screenshot":"","updated":0}
-DRIVER=None
-PHONE=""
-REQUEST=False
-RESTART=False
+S={"connected":False,"ready":False,"message":"بدء Chrome...","error":None,"phone":"","code":"",
+   "requested":False,"url":"","title":"","chrome":"","driver":"","screenshot":"","updated":0}
+PHONE=""; REQUEST=False; RESTART=False
 
+def setv(**kw):
+    with LOCK:S.update(kw);S["updated"]=time.time()
 def state():
-    with LOCK:return dict(D)
+    with LOCK:return dict(S)
 
-def setd(**kw):
-    with LOCK:
-        D.update(kw);D["updated"]=time.time()
+def cmd(c):
+    try:return subprocess.check_output(c,stderr=subprocess.STDOUT,text=True,timeout=10).strip()
+    except Exception as e:return "unavailable: "+str(e)
 
 def options():
-    o=webdriver.ChromeOptions()
-    o.binary_location=os.getenv("CHROME_BIN","/usr/bin/chromium")
-    for a in ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu","--disable-software-rasterizer",
-              "--window-size=1440,1000","--disable-extensions","--disable-notifications",
-              "--no-first-run","--no-default-browser-check","--disable-popup-blocking"]:
+    o=webdriver.ChromeOptions();o.binary_location=os.getenv("CHROME_BIN","/usr/bin/chromium")
+    for a in ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu",
+              "--disable-software-rasterizer","--window-size=1365,900","--disable-extensions",
+              "--disable-notifications","--no-first-run","--no-default-browser-check",
+              "--disable-popup-blocking","--disable-background-networking","--disable-sync",
+              "--remote-debugging-port=9222","--remote-allow-origins=*",
+              f"--user-data-dir={os.path.join(SESSION,'chrome-profile')}"]:
         o.add_argument(a)
-    o.add_argument("--lang=en-US")
-    o.add_argument(f"--user-data-dir={SESSION}")
-    return o
+    o.add_argument("--lang=en-US");return o
 
-def text_all(d):
+def make():
+    if not os.path.exists("/tmp/.X11-unix/X99"):raise RuntimeError("Xvfb :99 is not ready")
+    setv(chrome=cmd(["chromium","--version"]),driver=cmd(["chromedriver","--version"]))
+    service=webdriver.ChromeService(executable_path=os.getenv("CHROMEDRIVER_BIN","/usr/bin/chromedriver"),
+                                    log_output=os.path.join(DEBUG,"chromedriver.log"))
+    service.service_args=["--verbose"]
+    d=webdriver.Chrome(service=service,options=options());d.set_page_load_timeout(120);return d
+
+def body(d):
     try:return d.find_element(By.TAG_NAME,"body").text
     except:return ""
 
-def screenshot(d):
+def snap(d):
     try:
-        p=os.path.join(DEBUG,"whatsapp.png");d.save_screenshot(p)
-        return "/debug/whatsapp.png?"+str(int(time.time()))
+        p=os.path.join(DEBUG,"whatsapp.png");d.save_screenshot(p);return "/debug/whatsapp.png?t="+str(int(time.time()))
     except:return ""
 
-def find_pair_button(d):
-    # Exact/partial English labels first, then Arabic.
-    xpaths=[
+def connected(d):
+    b=body(d).lower()
+    return any(x in b for x in ["chats","archived","communities"]) or any(d.find_elements(By.CSS_SELECTOR,s) for s in ["#side","[data-testid='chat-list']"])
+
+def visible_text_nodes(d):
+    # Collect visible elements containing a plausible pairing code, while excluding generic page words.
+    vals=[]
+    try:
+        els=d.find_elements(By.XPATH,"//*[normalize-space(text())!='']")
+        for e in els:
+            try:
+                if not e.is_displayed():continue
+                t=" ".join((e.text or "").split())
+                if 5<=len(t)<=30: vals.append(t)
+            except:pass
+    except:pass
+    return vals
+
+def extract_code(d):
+    candidates=visible_text_nodes(d)+[body(d)]
+    pats=[
+      r"\b([A-Z0-9]{4})[\s-]+([A-Z0-9]{4})\b",
+      r"\b([A-Z0-9]{8})\b"
+    ]
+    banned={"WHATSAPP","DOWNLOAD","ANDROID","WINDOWS","CONTINUE","NEXT","PHONE","NUMBER"}
+    for text in candidates:
+        for p in pats:
+            m=re.search(p,text,re.I)
+            if m:
+                c=(m.group(1)+"-"+m.group(2)).upper() if len(m.groups())==2 else m.group(1).upper()
+                if c.replace("-","") not in banned and len(c.replace("-",""))==8:
+                    return c
+    # Sometimes the code is exposed through aria-label/title/value rather than text.
+    try:
+        for e in d.find_elements(By.CSS_SELECTOR,"[aria-label],[title],input"):
+            if not e.is_displayed():continue
+            for v in [e.get_attribute("aria-label"),e.get_attribute("title"),e.get_attribute("value")]:
+                if not v:continue
+                m=re.search(r"\b([A-Z0-9]{4})[\s-]+([A-Z0-9]{4})\b",v,re.I)
+                if m:return (m.group(1)+"-"+m.group(2)).upper()
+    except:pass
+    return ""
+
+def click_pair(d):
+    xps=[
       "//*[self::button or @role='button'][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'link with phone number')]",
       "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'link with phone number')]",
       "//*[contains(normalize-space(.),'ربط برقم الهاتف')]"
     ]
-    for xp in xpaths:
+    for xp in xps:
         try:
             for e in d.find_elements(By.XPATH,xp):
-                if e.is_displayed():
-                    d.execute_script("arguments[0].click();",e); return True
-        except: pass
+                if e.is_displayed():d.execute_script("arguments[0].click();",e);return True
+        except:pass
     return False
 
-def find_phone_input(d):
-    sels=["input[type='tel']","input[placeholder*='phone']","input[placeholder*='Phone']",
-          "input[aria-label*='phone']","input[aria-label*='Phone']"]
-    for s in sels:
+def phone_input(d):
+    for s in ["input[type='tel']","input[placeholder*='phone']","input[placeholder*='Phone']","input[aria-label*='phone']"]:
         try:
             for e in d.find_elements(By.CSS_SELECTOR,s):
-                if e.is_displayed(): return e
+                if e.is_displayed():return e
         except:pass
     return None
 
-def find_continue(d):
-    for xp in [
-      "//button[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'next')]",
-      "//button[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'continue')]",
-      "//*[self::button or @role='button'][contains(normalize-space(.),'متابعة')]"
-    ]:
+def click_continue(d):
+    for xp in ["//button[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'next')]",
+               "//button[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'continue')]",
+               "//*[self::button or @role='button'][contains(normalize-space(.),'متابعة')]"]:
         try:
             for e in d.find_elements(By.XPATH,xp):
-                if e.is_displayed():
-                    d.execute_script("arguments[0].click();",e);return True
+                if e.is_displayed():d.execute_script("arguments[0].click();",e);return True
         except:pass
     return False
 
-def extract_code(d):
-    body=text_all(d)
-    # Pairing codes are normally an 8-character alphanumeric string, often grouped.
-    patterns=[
-      r"\b([A-Z0-9]{4}[-\s][A-Z0-9]{4})\b",
-      r"\b([A-Z0-9]{8})\b"
-    ]
-    for p in patterns:
-        for m in re.findall(p,body,re.I):
-            c=re.sub(r"\s+","-",m.upper())
-            if c not in {"WHATSAPP","DOWNLOAD","ANDROID"}:
-                return c
-    # Look at inputs/labels that may contain the generated code.
-    try:
-        for e in d.find_elements(By.CSS_SELECTOR,"input,code"):
-            v=(e.get_attribute("value") or e.text or "").strip()
-            if re.fullmatch(r"[A-Za-z0-9]{4}[-\s]?[A-Za-z0-9]{4}",v):
-                return re.sub(r"\s+","-",v.upper())
-    except:pass
-    return ""
-
-def request_pairing(phone):
+def request_pair(phone):
     global PHONE,REQUEST
-    phone=re.sub(r"\D","",phone or "")
-    if len(phone)<7: raise ValueError("أدخل رقم WhatsApp مع رمز الدولة، أرقام فقط.")
-    PHONE=phone;REQUEST=True
-    setd(phone=phone,pairing_requested=True,pairing_code="",error=None,message="سيتم طلب كود الاقتران...")
+    p=re.sub(r"\D","",phone or "")
+    if len(p)<7:raise ValueError("الرقم غير صالح. استخدم رمز الدولة وأرقامًا فقط.")
+    PHONE=p;REQUEST=True
+    setv(phone=p,requested=True,code="",error=None,message="تم استلام الرقم، انتظر تجهيز شاشة الاقتران...")
 
 def reset():
     global RESTART
     RESTART=True
 
 def loop():
-    global DRIVER,REQUEST,RESTART
+    global REQUEST,RESTART
     back=3
     while True:
         d=None
         try:
-            setd(ready=False,connected=False,pairing_code="",message="تشغيل Chromium...")
-            d=webdriver.Chrome(options=options());DRIVER=d
-            setd(ready=True,message="فتح WhatsApp Web...")
-            d.get("https://web.whatsapp.com/")
-            back=3
+            setv(ready=False,connected=False,code="",error=None,message="التحقق من Xvfb ثم تشغيل Chrome...")
+            d=make();setv(ready=True,message="Chrome يعمل، فتح WhatsApp Web...")
+            d.get("https://web.whatsapp.com/");back=3
             while True:
-                if RESTART:
-                    RESTART=False
-                    raise RuntimeError("Manual restart")
-                setd(url=d.current_url,title=d.title)
-                body=text_all(d)
-
-                if any(x in body.lower() for x in ["chats","archived","status","communities"]) or \
-                   any(d.find_elements(By.CSS_SELECTOR,s) for s in ["#side","[data-testid='chat-list']"]):
-                    setd(connected=True,pairing_code="",message="🟢 WhatsApp متصل")
+                if RESTART:RESTART=False;raise RuntimeError("Manual restart")
+                try:setv(url=d.current_url,title=d.title)
+                except:pass
+                if connected(d):
+                    setv(connected=True,code="",message="🟢 WhatsApp متصل",screenshot=snap(d))
                 else:
-                    if REQUEST and not D.get("pairing_code"):
-                        inp=find_phone_input(d)
+                    setv(connected=False,screenshot=snap(d))
+                    if REQUEST and not S["code"]:
+                        inp=phone_input(d)
                         if inp:
                             inp.click();inp.send_keys(Keys.CONTROL+"a");inp.send_keys(PHONE)
-                            find_continue(d)
-                            REQUEST=False
-                            setd(message="تم إرسال الرقم إلى WhatsApp، في انتظار كود الاقتران...")
+                            if click_continue(d):
+                                REQUEST=False;setv(message="تم إرسال الرقم إلى WhatsApp، جاري انتظار كود الاقتران...")
+                        elif click_pair(d):
+                            setv(message="تم فتح خيار الربط برقم الهاتف...")
                         else:
-                            if find_pair_button(d):
-                                setd(message="تم فتح خيار الربط برقم الهاتف...")
-                            else:
-                                setd(message="لم يظهر خيار «الربط برقم الهاتف» في WhatsApp Web. اللقطة أدناه توضح الصفحة الحالية.")
-                    code=extract_code(d)
-                    if code:setd(pairing_code=code,message="🟢 كود الاقتران جاهز — أدخله في هاتفك داخل WhatsApp.")
-                    setd(screenshot=screenshot(d))
+                            setv(message="لم يظهر خيار الربط بالرقم بعد.")
+                    c=extract_code(d)
+                    if c:setv(code=c,message="🟢 تم التحقق من وجود كود اقتران فعلي")
                 time.sleep(2)
         except Exception as e:
-            print("[WA]",repr(e),flush=True);traceback.print_exc()
-            setd(ready=False,connected=False,error=f"{type(e).__name__}: {e}",message="تعطل Selenium — إعادة التشغيل...")
+            msg=f"{type(e).__name__}: {e}";print("[WA]",msg,flush=True);traceback.print_exc()
+            setv(ready=False,connected=False,code="",error=msg,message="فشل Chrome — إعادة التشغيل...",screenshot=snap(d) if d else "")
             try:
                 if d:d.quit()
             except:pass
             time.sleep(back);back=min(back*2,45)
-        finally: DRIVER=None
 
-def start():
-    threading.Thread(target=loop,name="whatsapp",daemon=True).start()
+def start():threading.Thread(target=loop,name="whatsapp",daemon=True).start()

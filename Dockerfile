@@ -1,11 +1,11 @@
 FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp DISPLAY=:99
-RUN apt-get update && apt-get install -y --no-install-recommends chromium chromium-driver xvfb fonts-liberation fonts-noto-color-emoji ca-certificates tini procps psmisc && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends chromium chromium-driver xvfb fonts-liberation fonts-noto-color-emoji ca-certificates tini procps && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN mkdir -p /app/storage/whatsapp_session /app/storage/debug /app/storage/runtime && chmod -R 777 /app/storage
+RUN mkdir -p /app/storage/whatsapp_session /app/storage/debug && chmod -R 777 /app/storage
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_BIN=/usr/bin/chromedriver
 ENTRYPOINT ["/usr/bin/tini","--"]
