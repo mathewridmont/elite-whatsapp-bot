@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: elite-class-v8
+    name: elite-class-v9
     runtime: docker
     plan: starter
     healthCheckPath: /health
