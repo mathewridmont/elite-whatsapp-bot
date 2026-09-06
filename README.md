@@ -1,10 +1,13 @@
-# ELITE CLASS — Render Docker
+# ELITE CLASS
+Render + Docker + Chromium + Selenium + Flask.
 
-1. ارفع الملفات إلى GitHub.
-2. Render → New → Web Service → اختر المستودع.
-3. Runtime: Docker.
-4. أضف Persistent Disk بمسار `/app/storage` وحجم 1GB.
-5. Deploy ثم افتح رابط الخدمة.
-6. امسح QR من WhatsApp → الأجهزة المرتبطة → ربط جهاز.
+الروابط:
+- `/` لوحة الإدارة.
+- `/qr` شاشة ربط WhatsApp مستقلة.
 
-هذه أتمتة غير رسمية لـWhatsApp Web وليست Cloud API. تجنب السبام والرسائل الجماعية. قد تتغير selectors عند تحديث WhatsApp Web.
+Render:
+- Runtime: Docker
+- Persistent Disk: `/app/storage`, 1GB
+- ارفع المشروع إلى GitHub ثم اربطه بـRender.
+
+ملاحظة: هذه أتمتة غير رسمية لـWhatsApp Web وليست WhatsApp Cloud API. لا تستخدمها للسبام أو الرسائل الجماعية. قد تتغير واجهة WhatsApp Web وselectors.
