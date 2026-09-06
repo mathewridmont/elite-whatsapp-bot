@@ -1,12 +1,10 @@
 services:
   - type: web
-    name: elite-class-v4
+    name: elite-class-v5
     runtime: docker
     plan: starter
     healthCheckPath: /health
     envVars:
-      - key: PYTHONUNBUFFERED
-        value: "1"
       - key: ADMIN_USER
         value: admin
       - key: ADMIN_PASSWORD
