@@ -1,17 +1,10 @@
-# ELITE WhatsApp Bot
+# ELITE CLASS — Render Docker
 
-Prototype WhatsApp Web bot using Flask + Selenium + Chromium, packaged for Render Docker deployment.
+1. ارفع الملفات إلى GitHub.
+2. Render → New → Web Service → اختر المستودع.
+3. Runtime: Docker.
+4. أضف Persistent Disk بمسار `/app/storage` وحجم 1GB.
+5. Deploy ثم افتح رابط الخدمة.
+6. امسح QR من WhatsApp → الأجهزة المرتبطة → ربط جهاز.
 
-## Render
-1. Push this repository to GitHub.
-2. In Render: New → Web Service → connect the repository.
-3. Choose Docker runtime (or let `render.yaml` configure it).
-4. Use a paid service with a Persistent Disk.
-5. Mount the disk at `/app/storage`.
-6. Deploy.
-7. Open the Render URL and scan the WhatsApp QR.
-
-The WhatsApp session is stored in `/app/storage/whatsapp_session`.
-
-## Important
-This uses WhatsApp Web automation, not the official WhatsApp Business API. DOM selectors can break when WhatsApp changes its web interface. Avoid spam/bulk messaging and respect WhatsApp's terms.
+هذه أتمتة غير رسمية لـWhatsApp Web وليست Cloud API. تجنب السبام والرسائل الجماعية. قد تتغير selectors عند تحديث WhatsApp Web.

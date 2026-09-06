@@ -1,253 +1,136 @@
-import os
-import random
-import threading
-import time
-
+import os,time,random,base64,threading,traceback,re
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import (
-    StaleElementReferenceException,
-    WebDriverException,
-)
-
-from database import (
-    get_player,
-    get_rank,
-    load_players,
-    save_players,
-    update_level,
-)
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
-SESSION_DIR = os.path.join(STORAGE_DIR, "whatsapp_session")
-os.makedirs(SESSION_DIR, exist_ok=True)
-
-players = load_players()
-active_challenges = {}
-state_lock = threading.Lock()
-state = {
-    "connected": False,
-    "qr": None,
-    "message": "جاري تشغيل WhatsApp...",
-    "error": None,
-}
-
-CHALLENGES = [
-    {"question": "🧠 التحدي الأول\n\nما الرقم التالي؟\n\n2 - 6 - 12 - 20 - 30 - ؟", "answers": ["42"], "points": 100},
-    {"question": "🧠 التحدي الثاني\n\nشيء كلما أخذت منه كبر. ما هو؟", "answers": ["الحفرة", "حفرة"], "points": 100},
-    {"question": "🧠 التحدي الثالث\n\nما الشيء الذي يمشي بلا أرجل؟", "answers": ["الوقت"], "points": 150},
-]
-
-
-def set_state(**kwargs):
-    with state_lock:
-        state.update(kwargs)
-
-
-def get_state():
-    with state_lock:
-        return dict(state)
-
-
-def normalize(text):
-    return (text.strip().lower().replace("أ", "ا").replace("إ", "ا").replace("آ", "ا"))
-
-
-def menu():
-    return """╔════════════════════╗
+from database import load_players,save_players,get_player,update_level,get_rank
+BASE=os.path.dirname(os.path.abspath(__file__)); SESSION=os.path.join(BASE,"storage","whatsapp_session"); os.makedirs(SESSION,exist_ok=True)
+players=load_players(); players_lock=threading.RLock(); state_lock=threading.RLock()
+state={"connected":False,"qr":None,"message":"جاري تشغيل Selenium...","error":None,"last_activity":None}
+active={}; last_seen=None
+CHALLENGES=[
+{"question":"ما الرقم التالي؟\n2 - 6 - 12 - 20 - 30 - ؟","answers":["42"],"points":100},
+{"question":"شيء كلما أخذت منه كبر. ما هو؟","answers":["الحفرة","حفرة"],"points":100},
+{"question":"ما الشيء الذي يمشي بلا أرجل؟","answers":["الوقت"],"points":150},
+{"question":"إذا كان لديك 5 تفاحات وأخذت 2، كم أصبح معك؟","answers":["2"],"points":75}]
+def set_state(**kw):
+    with state_lock: state.update(kw)
+def get_public_state():
+    with state_lock: return dict(state)
+def norm(s):
+    for a,b in {"أ":"ا","إ":"ا","آ":"ا","ى":"ي","ة":"ه","ؤ":"و","ئ":"ي"}.items(): s=s.replace(a,b)
+    return re.sub(r"\s+"," ",(s or "").strip().lower())
+def menu(): return """╔════════════════════╗
        🎓 ELITE CLASS
 ╚════════════════════╝
 
-/start — تسجيل الدخول
-/profile — ملفك الشخصي
-/challenge — تحدي جديد
+/start — التسجيل
+/profile — ملفك
+/challenge — تحدٍ جديد
 /rank — المتصدرون
 /help — المساعدة
 
 ⚠️ كل نقطة لها ثمن."""
-
-
-def profile(player):
-    return f"""╔════════════════════╗
+def profile(p): return f"""╔════════════════════╗
        👤 PROFILE
 ╚════════════════════╝
-
-الاسم: {player['name']}
-💰 النقاط: {player['points']}
-⭐ المستوى: {player['level']}
-🎯 التحديات: {player['solved']}
-🏆 الرتبة: {get_rank(player['points'])}"""
-
-
+الاسم: {p['name']}
+💰 النقاط: {p['points']}
+⭐ المستوى: {p['level']}
+🎯 محلولة: {p['solved']}
+❌ خاطئة: {p['wrong']}
+🏆 الرتبة: {get_rank(p['points'])}"""
 def ranking():
-    if not players:
-        return "لا يوجد لاعبون."
-    top = sorted(players.values(), key=lambda x: x["points"], reverse=True)[:10]
-    result = "╔════════════════════╗\n       🏆 TOP 10\n╚════════════════════╝\n\n"
-    for i, player in enumerate(top, 1):
-        result += f"{i}. {player['name']} — {player['points']} نقطة\n"
-    return result
-
-
+    with players_lock: top=sorted(players.values(),key=lambda p:int(p.get("points",0)),reverse=True)[:10]
+    return "لا يوجد لاعبون بعد." if not top else "╔════════════════════╗\n       🏆 TOP 10\n╚════════════════════╝\n\n"+"".join(f'{i}. {p["name"]} — {p["points"]} نقطة\n' for i,p in enumerate(top,1))
 def create_driver():
-    options = webdriver.ChromeOptions()
-    options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/chromium")
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--window-size=1365,900")
-    options.add_argument("--user-data-dir=" + SESSION_DIR)
-    options.add_argument("--remote-debugging-port=9222")
-    return webdriver.Chrome(options=options)
-
-
-def find_qr(driver):
-    # WhatsApp Web has changed its DOM over time; try several likely QR containers.
-    selectors = [
-        "div[data-ref] canvas",
-        "canvas",
-    ]
-    for selector in selectors:
-        try:
-            for element in driver.find_elements(By.CSS_SELECTOR, selector):
-                if element.is_displayed():
-                    image = element.screenshot_as_base64
-                    if image:
-                        return image
-        except Exception:
-            continue
-    return None
-
-
-def is_connected(driver):
-    selectors = [
-        "#side",
-        "[data-testid='chat-list']",
-        "[aria-label='Chat list']",
-    ]
-    for selector in selectors:
-        try:
-            element = driver.find_element(By.CSS_SELECTOR, selector)
-            if element.is_displayed():
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def get_messages(driver):
-    for selector in ("div.message-in", "div[data-testid='msg-container']"):
-        try:
-            messages = driver.find_elements(By.CSS_SELECTOR, selector)
-            if messages:
-                return messages
-        except Exception:
-            continue
-    return []
-
-
-def send_message(driver, text):
-    for selector in ("footer div[contenteditable='true']", "div[contenteditable='true']"):
-        try:
-            for box in driver.find_elements(By.CSS_SELECTOR, selector):
-                if box.is_displayed():
-                    box.click()
-                    box.send_keys(text)
-                    box.send_keys(Keys.ENTER)
-                    return True
-        except Exception:
-            continue
-    return False
-
-
-def process_message(driver, message):
-    try:
-        text = message.text.strip()
-    except StaleElementReferenceException:
-        return
-    if not text:
-        return
-
-    # Prototype: one active player. Multi-player identity extraction comes next.
-    player_id = "prototype-player"
-    player = get_player(players, player_id, "Player")
-    command = normalize(text)
-
-    if command == "/start" or command == "/help":
-        save_players(players)
-        send_message(driver, menu())
-        return
-    if command == "/profile":
-        send_message(driver, profile(player))
-        return
-    if command == "/rank":
-        send_message(driver, ranking())
-        return
-    if command == "/challenge":
-        challenge = random.choice(CHALLENGES)
-        active_challenges[player_id] = challenge
-        send_message(driver, f"╔════════════════════╗\n       ⚔️ CHALLENGE\n╚════════════════════╝\n\n{challenge['question']}\n\n━━━━━━━━━━━━━━━━━━━━\n🎯 الجائزة: {challenge['points']} نقطة\n\nأرسل إجابتك.")
-        return
-
-    challenge = active_challenges.get(player_id)
-    if challenge:
-        if any(command == normalize(answer) for answer in challenge["answers"]):
-            player["points"] += challenge["points"]
-            player["solved"] += 1
-            update_level(player)
-            save_players(players)
-            del active_challenges[player_id]
-            send_message(driver, f"🎯 إجابة صحيحة.\n\n+{challenge['points']} نقطة\n\n💰 نقاطك: {player['points']}\n⭐ المستوى: {player['level']}\n🏆 الرتبة: {get_rank(player['points'])}")
-        else:
-            send_message(driver, "❌ إجابة خاطئة.\n\nحاول مرة أخرى.")
-
-
-def run_bot():
-    last_signature = None
-    while True:
-        driver = None
-        try:
-            set_state(connected=False, qr=None, message="جاري تشغيل Chromium...", error=None)
-            driver = create_driver()
-            driver.get("https://web.whatsapp.com/")
-            set_state(message="جاري تحميل WhatsApp Web...")
-
-            while True:
-                if is_connected(driver):
-                    set_state(connected=True, qr=None, message="WhatsApp متصل", error=None)
-                    messages = get_messages(driver)
-                    if messages:
-                        # Avoid repeatedly processing the same visible last message.
-                        try:
-                            signature = messages[-1].text.strip()
-                        except Exception:
-                            signature = None
-                        if signature and signature != last_signature:
-                            last_signature = signature
-                            process_message(driver, messages[-1])
-                else:
-                    qr = find_qr(driver)
-                    if qr:
-                        set_state(connected=False, qr=qr, message="امسح QR من هاتفك", error=None)
-                    else:
-                        set_state(connected=False, qr=None, message="جاري إنشاء QR...", error=None)
-                time.sleep(2)
-        except Exception as error:
-            print("BOT ERROR:", repr(error), flush=True)
-            set_state(connected=False, qr=None, message="إعادة تشغيل WhatsApp...", error=str(error))
+    print("[BOT] Starting Chromium...",flush=True)
+    o=webdriver.ChromeOptions(); o.binary_location=os.environ.get("CHROME_BIN","/usr/bin/chromium")
+    for x in ["--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--window-size=1365,1000","--disable-notifications","--disable-extensions","--no-first-run","--no-default-browser-check","--disable-background-networking"]: o.add_argument(x)
+    o.add_argument(f"--user-data-dir={SESSION}")
+    d=webdriver.Chrome(options=o); d.set_page_load_timeout(90); d.implicitly_wait(1)
+    print("[BOT] Chromium started.",flush=True); return d
+def visible(d,sel):
+    try:return [e for e in d.find_elements(By.CSS_SELECTOR,sel) if e.is_displayed()]
+    except:return []
+def find_qr(d):
+    for sel in ["div[data-ref] canvas","div[data-ref]","canvas","img[alt*='QR']"]:
+        for e in visible(d,sel):
             try:
-                if driver:
-                    driver.quit()
-            except Exception:
-                pass
-            time.sleep(10)
+                b=e.screenshot_as_png
+                if b and len(b)>1000:return base64.b64encode(b).decode()
+            except: pass
+    return None
+def connected(d): return any(visible(d,s) for s in ["#side","[data-testid='chat-list']","[aria-label='Chat list']","[aria-label='قائمة الدردشات']"])
+def incoming(d):
+    for s in ["div.message-in","div[data-testid='msg-container']"]:
+        x=visible(d,s)
+        if x:return x
+    return []
+def identity(e):
+    try:return e.get_attribute("data-id") or (e.text+"|"+e.get_attribute("class"))
+    except:return None
+def send(d,text):
+    for s in ["footer div[contenteditable='true'][role='textbox']","footer div[contenteditable='true']","div[contenteditable='true'][role='textbox']"]:
+        for e in visible(d,s):
+            try:e.click(); e.send_keys(text); e.send_keys(Keys.ENTER); return True
+            except:pass
+    return False
+def process(d,e):
+    global last_seen
+    try:text=e.text.strip(); ident=identity(e)
+    except:return
+    if not text or ident==last_seen:return
+    last_seen=ident; set_state(last_activity=time.time())
+    pid="current-chat"
+    with players_lock:
+        p=get_player(players,pid,"Player"); c=norm(text)
+        if c=="/start": save_players(players); send(d,menu()); return
+        if c in ("/help","مساعدة"): send(d,menu()); return
+        if c=="/profile": send(d,profile(p)); return
+        if c=="/rank": send(d,ranking()); return
+        if c=="/challenge":
+            ch=random.choice(CHALLENGES); active[pid]=ch; send(d,f"""╔════════════════════╗
+       ⚔️ CHALLENGE
+╚════════════════════╝
 
+{ch['question']}
 
-threading.Thread(target=run_bot, daemon=True, name="whatsapp-selenium").start()
+━━━━━━━━━━━━━━━━━━━━
+🎯 الجائزة: {ch['points']} نقطة
+أرسل إجابتك."""); return
+        ch=active.get(pid)
+        if ch:
+            if any(c==norm(a) for a in ch["answers"]):
+                p["points"]+=ch["points"]; p["solved"]+=1; update_level(p); active.pop(pid,None); save_players(players)
+                send(d,f"""🎯 إجابة صحيحة.
++{ch['points']} نقطة
+💰 نقاطك: {p['points']}
+⭐ المستوى: {p['level']}
+🏆 الرتبة: {get_rank(p['points'])}""")
+            else:
+                p["wrong"]+=1; save_players(players); send(d,"❌ إجابة خاطئة.\n\nحاول مرة أخرى.")
+def bot_loop():
+    global last_seen
+    delay=5
+    while True:
+        d=None
+        try:
+            set_state(connected=False,qr=None,message="جاري تشغيل Selenium...",error=None)
+            d=create_driver(); d.get("https://web.whatsapp.com/"); set_state(message="WhatsApp Web مفتوح، انتظر QR...")
+            delay=5
+            while True:
+                if connected(d):
+                    set_state(connected=True,qr=None,message="WhatsApp متصل",error=None)
+                    msgs=incoming(d)
+                    if msgs: process(d,msgs[-1])
+                else:
+                    q=find_qr(d); set_state(connected=False,qr=q,message="امسح QR من هاتفك" if q else "جاري البحث عن QR...",error=None)
+                time.sleep(2)
+        except Exception as e:
+            print("[BOT ERROR]",repr(e),flush=True); traceback.print_exc()
+            set_state(connected=False,qr=None,message="إعادة تشغيل Selenium...",error=f"{type(e).__name__}: {e}")
+            try:
+                if d:d.quit()
+            except:pass
+            time.sleep(delay); delay=min(delay*2,60)
+threading.Thread(target=bot_loop,name="whatsapp-selenium",daemon=True).start()

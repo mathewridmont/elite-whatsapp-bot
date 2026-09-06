@@ -3,11 +3,10 @@ services:
     name: elite-whatsapp-bot
     runtime: docker
     plan: starter
-    dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
-      - key: PORT
-        value: "10000"
+      - key: PYTHONUNBUFFERED
+        value: "1"
     disk:
       name: whatsapp-data
       mountPath: /app/storage
